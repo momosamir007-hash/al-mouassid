@@ -1,0 +1,22 @@
+{
+  "name": "المساعد – AL MOUASSID",
+  "short_name": "المساعد",
+  "description": "مساعد تعليمي ذكي يساعدك على فهم التمارين وحلها تدريجياً",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f5ef",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "تمرين جديد", "url": "/new" },
+    { "name": "سجل التمارين", "url": "/history" }
+  ]
+}
