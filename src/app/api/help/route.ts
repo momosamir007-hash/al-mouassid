@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
@@ -5,10 +6,11 @@ import { subjects } from "@/db/schema";
 import { DEFAULT_SUBJECTS, HELP_ACTION_IDS, LEVEL_IDS } from "@/lib/constants";
 import { getRouter, NoProviderAvailableError } from "@/server/ai";
 import { noProviderMessage, publicAttempts } from "@/server/ai/explain";
-import { requireUser } from "@/server/auth/session";
+import { getSessionUser } from "@/server/auth/session";
 import { loadHistory, saveTurn, upsertExercise } from "@/server/conversation/conversation";
 import { EngineInputError, runHelp } from "@/server/learning/engine";
-import { ApiError, handle, ok, parseBody } from "@/server/utils/api";
+import { userTurnText } from "@/server/learning/prompts";
+import { ApiError, clientIp, handle, ok, parseBody } from "@/server/utils/api";
 import { rateLimit } from "@/server/utils/ratelimit";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +23,16 @@ const schema = z.object({
   exerciseText: z.string().min(1).max(4000),
   action: z.enum(HELP_ACTION_IDS),
   studentAnswer: z.string().max(2000).optional(),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        action: z.string().max(40),
+        content: z.string().max(4000),
+      }),
+    )
+    .max(24)
+    .optional(),
   image: z
     .object({
       mime: z.enum(["image/jpeg", "image/png", "image/webp"]),
@@ -41,20 +53,27 @@ async function subjectName(slug: string): Promise<string> {
 
 export async function POST(req: Request) {
   return handle("help", async () => {
-    const user = await requireUser();
-    if (!rateLimit(`help:${user.id}`, 40, 10 * 60_000)) {
+    const user = await getSessionUser();
+    const rateKey = user ? `help:${user.id}` : `help:ip:${clientIp(req)}`;
+    if (!rateLimit(rateKey, 40, 10 * 60_000)) {
       throw new ApiError(429, "طلبات كثيرة خلال وقت قصير. خذ استراحة قصيرة ثم تابع.", "rate_limited");
     }
     const body = await parseBody(req, schema);
 
     try {
-      const exercise = await upsertExercise(user.id, {
-        clientId: body.clientId,
-        level: body.level,
-        subject: body.subject,
-        text: body.exerciseText,
-      });
-      const history = await loadHistory(exercise.id);
+      let exerciseId: string | null = null;
+      let history = body.history ?? [];
+
+      if (user) {
+        const exercise = await upsertExercise(user.id, {
+          clientId: body.clientId,
+          level: body.level,
+          subject: body.subject,
+          text: body.exerciseText,
+        });
+        exerciseId = exercise.id;
+        history = await loadHistory(exercise.id);
+      }
 
       const out = await runHelp(
         {
@@ -66,35 +85,59 @@ export async function POST(req: Request) {
           studentAnswer: body.studentAnswer,
           history,
           image: body.image ?? null,
-          userId: user.id,
+          userId: user?.id ?? null,
         },
         getRouter(),
       );
 
-      const { userRow, assistantRow } = await saveTurn({
-        exerciseId: exercise.id,
-        action: body.action,
-        studentAnswer: body.studentAnswer,
-        reply: out.text,
-        providerName: out.provider.name,
-        providerLocal: out.provider.isLocal,
-        model: out.provider.model,
-      });
+      if (user && exerciseId) {
+        const { userRow, assistantRow } = await saveTurn({
+          exerciseId,
+          action: body.action,
+          studentAnswer: body.studentAnswer,
+          reply: out.text,
+          providerName: out.provider.name,
+          providerLocal: out.provider.isLocal,
+          model: out.provider.model,
+        });
 
+        return ok({
+          userMessage: { id: userRow.id, role: "user", action: body.action, content: userRow.content, createdAt: userRow.createdAt.getTime() },
+          message: {
+            id: assistantRow.id,
+            role: "assistant",
+            action: body.action,
+            content: assistantRow.content,
+            provider: { name: out.provider.name, isLocal: out.provider.isLocal, model: out.provider.model },
+            createdAt: assistantRow.createdAt.getTime(),
+          },
+          source: out.source,
+          imageRequested: out.imageRequested,
+          imageUsed: out.imageUsed,
+          fallbacks: publicAttempts(out.attempts).filter((a) => a.outcome === "failed"),
+        });
+      }
+
+      const now = Date.now();
       return ok({
-        userMessage: { id: userRow.id, role: "user", action: body.action, content: userRow.content, createdAt: userRow.createdAt.getTime() },
+        userMessage: {
+          id: randomUUID(),
+          role: "user",
+          action: body.action,
+          content: userTurnText(body.action, body.studentAnswer),
+          createdAt: now,
+        },
         message: {
-          id: assistantRow.id,
+          id: randomUUID(),
           role: "assistant",
           action: body.action,
-          content: assistantRow.content,
+          content: out.text,
           provider: { name: out.provider.name, isLocal: out.provider.isLocal, model: out.provider.model },
-          createdAt: assistantRow.createdAt.getTime(),
+          createdAt: now + 1,
         },
         source: out.source,
         imageRequested: out.imageRequested,
         imageUsed: out.imageUsed,
-        // تحويل تلقائي حدث؟ نُظهر عدد المحاولات الفاشلة فقط (للشفافية)
         fallbacks: publicAttempts(out.attempts).filter((a) => a.outcome === "failed"),
       });
     } catch (e) {

@@ -4,12 +4,20 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { assessClarity } from "@/lib/clarity";
 import { LEVELS } from "@/lib/constants";
+import { api } from "@/lib/client/api";
 import { createExercise, setPrefs, usePrefs } from "@/lib/client/exerciseStore";
 import { useSubjects } from "@/lib/client/hooks";
 import { canvasToJpegBase64, loadImage, renderEdited, setHandoff, type EditOptions } from "@/lib/client/image";
 import { OCR_LANGS, recognize } from "@/lib/client/ocr";
 
 type Stage = "pick" | "edit" | "review";
+type OcrSource = "vision" | "ai_refined" | "tesseract" | null;
+
+interface AiOcrResponse {
+  mode: "vision" | "ai_refined" | "needs_local_ocr";
+  text: string;
+  provider?: { name: string; model: string; isLocal: boolean };
+}
 
 const DEFAULT_OPTS: EditOptions = { rotation: 0, crop: { left: 0, top: 0, right: 0, bottom: 0 }, enhance: true, maxSide: 1600 };
 
@@ -22,10 +30,13 @@ export function CaptureFlow() {
   const [opts, setOpts] = useState<EditOptions>(DEFAULT_OPTS);
   const [error, setError] = useState<string | null>(null);
   const [ocrBusy, setOcrBusy] = useState(false);
+  const [refineBusy, setRefineBusy] = useState(false);
   const [progress, setProgress] = useState<{ pct: number; status: string } | null>(null);
   const [text, setText] = useState("");
   const [confidence, setConfidence] = useState<number | null>(null);
-  const [sendImage, setSendImage] = useState(false);
+  const [ocrSource, setOcrSource] = useState<OcrSource>(null);
+  const [ocrProviderName, setOcrProviderName] = useState<string | null>(null);
+  const [sendImage, setSendImage] = useState(true);
   const previewRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -57,22 +68,138 @@ export function CaptureFlow() {
     }
   }
 
+  /** الاستخراج التقليدي عبر Tesseract.js داخل المتصفح */
   async function runOcr() {
     if (!img) return;
     setOcrBusy(true);
     setError(null);
-    setProgress({ pct: 0, status: "تحضير" });
+    setProgress({ pct: 0, status: "تحضير الاستخراج المحلي (Tesseract)" });
     try {
       const canvas = renderEdited(img, { ...opts, maxSide: 2000 });
       const r = await recognize(canvas, prefs.ocrLang, (pct, status) => setProgress({ pct, status }));
       setText(r.text);
       setConfidence(r.confidence);
+      setOcrSource("tesseract");
+      setOcrProviderName(null);
       setStage("review");
     } catch {
-      setError("تعذّر تشغيل التعرف على النص. يحتاج التشغيل الأول إلى اتصال بالإنترنت لتنزيل ملفات اللغة. يمكنك كتابة النص يدوياً.");
+      setError("تعذّر تشغيل التعرف المحلي على النص. يمكنك استخدام زر «الاستخراج بالذكاء الاصطناعي» أو كتابة النص يدوياً.");
     } finally {
       setOcrBusy(false);
       setProgress(null);
+    }
+  }
+
+  /** الاستخراج الذكي بالذكاء الاصطناعي (Vision AI أولاً، ثم الهجين Tesseract + تصحيح AI احتياطياً) */
+  async function runAiOcr() {
+    if (!img) return;
+    setOcrBusy(true);
+    setError(null);
+    setProgress({ pct: 25, status: "🤖 جارٍ قراءة الصورة والمعادلات بالذكاء الاصطناعي…" });
+    try {
+      // للذكاء الاصطناعي البصري نرسل الصورة بألوانها الطبيعية الواضحة (بدون تباين حاد قد يخفي الرموز)
+      const visionCanvas = renderEdited(img, { ...opts, enhance: false, maxSide: 1400 });
+      const b64 = canvasToJpegBase64(visionCanvas);
+
+      const res = await api<AiOcrResponse>("/api/ocr", {
+        method: "POST",
+        json: {
+          image: { mime: "image/jpeg", data: b64 },
+          lang: prefs.ocrLang,
+        },
+      });
+
+      if (res.mode === "vision" && res.text.trim()) {
+        setText(res.text);
+        setConfidence(null);
+        setOcrSource("vision");
+        setOcrProviderName(res.provider?.name ?? "AI Vision");
+        setStage("review");
+        return;
+      }
+
+      // إذا لم يتوفر نموذج رؤية في اللحظة الحالية، نشغّل Tesseract محلياً ثم نصلح النص بالذكاء الاصطناعي النصي
+      setProgress({ pct: 50, status: "🔤 استخراج أولي محلي ثم تصحيح بالذكاء الاصطناعي…" });
+      const localCanvas = renderEdited(img, { ...opts, maxSide: 2000 });
+      const localRes = await recognize(localCanvas, prefs.ocrLang, (pct, status) =>
+        setProgress({ pct: Math.min(85, 50 + Math.round(pct * 0.35)), status }),
+      );
+
+      if (localRes.text.trim()) {
+        setProgress({ pct: 90, status: "✨ تصحيح الكلمات والمعادلات بالذكاء الاصطناعي…" });
+        try {
+          const refined = await api<AiOcrResponse>("/api/ocr", {
+            method: "POST",
+            json: { rawOcrText: localRes.text, lang: prefs.ocrLang },
+          });
+          if (refined.text.trim()) {
+            setText(refined.text);
+            setConfidence(localRes.confidence);
+            setOcrSource("ai_refined");
+            setOcrProviderName(refined.provider?.name ?? "AI");
+            setStage("review");
+            return;
+          }
+        } catch {
+          /* إذا تعذر التصحيح السحابي نكتفي بنص Tesseract */
+        }
+      }
+
+      setText(localRes.text);
+      setConfidence(localRes.confidence);
+      setOcrSource("tesseract");
+      setOcrProviderName(null);
+      setStage("review");
+    } catch {
+      // في حال انقطاع الإنترنت أو تعذر الخادم، نتحول تلقائياً إلى Tesseract المحلي
+      try {
+        setProgress({ pct: 10, status: "التحويل إلى الاستخراج المحلي (Tesseract)…" });
+        const canvas = renderEdited(img, { ...opts, maxSide: 2000 });
+        const r = await recognize(canvas, prefs.ocrLang, (pct, status) => setProgress({ pct, status }));
+        setText(r.text);
+        setConfidence(r.confidence);
+        setOcrSource("tesseract");
+        setOcrProviderName(null);
+        setStage("review");
+      } catch {
+        setError("تعذّر استخراج النص من الصورة. تأكد من اتصالك بالإنترنت أو اكتب التمرين يدوياً.");
+      }
+    } finally {
+      setOcrBusy(false);
+      setProgress(null);
+    }
+  }
+
+  /** تصحيح النص الحالي في مرحلة المراجعة عبر الذكاء الاصطناعي */
+  async function refineCurrentText() {
+    if (!text.trim() && !img) return;
+    setRefineBusy(true);
+    setError(null);
+    try {
+      const imagePayload = img
+        ? {
+            mime: "image/jpeg" as const,
+            data: canvasToJpegBase64(renderEdited(img, { ...opts, enhance: false, maxSide: 1400 })),
+          }
+        : undefined;
+
+      const res = await api<AiOcrResponse>("/api/ocr", {
+        method: "POST",
+        json: {
+          image: imagePayload,
+          rawOcrText: text.trim() || undefined,
+          lang: prefs.ocrLang,
+        },
+      });
+      if (res.text.trim()) {
+        setText(res.text);
+        setOcrSource(res.mode === "vision" ? "vision" : "ai_refined");
+        setOcrProviderName(res.provider?.name ?? "AI");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "تعذّر تصحيح النص بالذكاء الاصطناعي حالياً.");
+    } finally {
+      setRefineBusy(false);
     }
   }
 
@@ -135,6 +262,8 @@ export function CaptureFlow() {
             onClick={() => {
               setText("");
               setConfidence(null);
+              setOcrSource(null);
+              setOcrProviderName(null);
               setStage("review");
             }}
           >
@@ -167,7 +296,7 @@ export function CaptureFlow() {
           </details>
           <label className="flex items-center gap-3 font-bold">
             <input type="checkbox" className="h-5 w-5 accent-teal-700" checked={opts.enhance} onChange={(e) => setOpts((o) => ({ ...o, enhance: e.target.checked }))} />
-            تحسين الوضوح (تدرج رمادي + تباين) لتحسين التعرف على النص
+            تحسين الوضوح (تدرج رمادي + تباين) لتحسين التعرف المحلي (Tesseract)
           </label>
           <div>
             <label className="label" htmlFor="lang">
@@ -186,24 +315,29 @@ export function CaptureFlow() {
               <div className="h-3 overflow-hidden rounded-full bg-stone-200">
                 <div className="h-full bg-teal-600 transition-all" style={{ width: `${progress.pct}%` }} />
               </div>
-              <p className="mt-1 text-sm text-stone-500">
-                {progress.status} {progress.pct}% — قد يستغرق التشغيل الأول وقتاً لتنزيل ملفات اللغة.
+              <p className="mt-1 text-sm font-bold text-teal-800">
+                {progress.status} ({progress.pct}%)
               </p>
             </div>
           )}
-          <div className="flex flex-wrap gap-2">
-            <button className="btn-primary flex-1" disabled={ocrBusy} onClick={runOcr}>
-              {ocrBusy ? "جارٍ استخراج النص…" : "🔤 استخراج النص"}
-            </button>
+          <div className="space-y-2">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button className="btn-primary" disabled={ocrBusy} onClick={runAiOcr}>
+                {ocrBusy ? "جارٍ القراءة…" : "🤖 استخراج بالذكاء الاصطناعي (للكاميرا والمعادلات)"}
+              </button>
+              <button className="btn-soft" disabled={ocrBusy} onClick={runOcr}>
+                {ocrBusy ? "جارٍ الاستخراج…" : "🔤 استخراج تقليدي محلي (Tesseract)"}
+              </button>
+            </div>
             <button
-              className="btn-ghost"
+              className="btn-ghost w-full"
               disabled={ocrBusy}
               onClick={() => {
                 setImg(null);
                 setStage("pick");
               }}
             >
-              صورة أخرى
+              📷 اختيار أو التقاط صورة أخرى
             </button>
           </div>
         </section>
@@ -211,22 +345,46 @@ export function CaptureFlow() {
 
       {stage === "review" && (
         <section className="card space-y-4">
-          <div>
-            <h2 className="text-lg font-extrabold">راجع النص وصحّحه</h2>
-            <p className="text-sm text-stone-600">
-              التعرف الآلي قد يخطئ، خاصة في الأرقام والرموز الرياضية والكتابة اليدوية. لن نبدأ الحل حتى يصبح النص واضحاً.
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-extrabold">راجع النص وصحّحه</h2>
+              <p className="text-sm text-stone-600">
+                تأكد من مطابقة الأرقام والرموز الرياضية للصورة قبل البدء في الحل.
+              </p>
+            </div>
+            {(img || text.trim()) && (
+              <button
+                type="button"
+                className="btn-soft !min-h-9 !px-3 !py-1.5 text-xs font-extrabold"
+                disabled={refineBusy}
+                onClick={refineCurrentText}
+              >
+                {refineBusy ? "جارٍ التصحيح بالذكاء الاصطناعي…" : "✨ إعادة قراءة/تصحيح بالذكاء الاصطناعي"}
+              </button>
+            )}
           </div>
-          {confidence !== null && (
+
+          {ocrSource === "vision" && (
+            <p className="chip bg-emerald-100 text-emerald-900">
+              🤖 تم استخراج النص والمعادلات بالذكاء الاصطناعي البصري ({ocrProviderName})
+            </p>
+          )}
+          {ocrSource === "ai_refined" && (
+            <p className="chip bg-teal-100 text-teal-900">
+              ✨ تم استخراج النص وتصحيحه بالذكاء الاصطناعي ({ocrProviderName})
+            </p>
+          )}
+          {ocrSource === "tesseract" && confidence !== null && (
             <p className={`chip ${confidence >= 75 ? "bg-emerald-100 text-emerald-900" : "bg-amber-100 text-amber-900"}`}>
-              ثقة التعرف: {confidence}%
+              🔤 استخراج تقليدي (Tesseract) — ثقة التعرف: {confidence}%
             </p>
           )}
-          {confidence !== null && confidence < 75 && (
+          {ocrSource === "tesseract" && confidence !== null && confidence < 75 && (
             <p className="rounded-2xl bg-amber-50 p-3 text-sm text-amber-900">
-              ⚠️ الثقة منخفضة. قارن النص بالصورة بعناية، وانتبه خصوصاً للأرقام والإشارات (+ − × ÷).
+              ⚠️ الثقة منخفضة في الاستخراج التقليدي. يمكنك الضغط على زر <b>«✨ إعادة قراءة/تصحيح بالذكاء الاصطناعي»</b> أعلاه لقراءة الصورة بدقة أعلى!
             </p>
           )}
+
           <textarea className="input" rows={7} dir="auto" value={text} onChange={(e) => setText(e.target.value)} aria-label="النص المستخرج" />
           {text.trim() && !clarity.clear && (
             <ul className="rounded-2xl bg-rose-50 p-3 text-sm font-bold text-rose-900">
@@ -267,8 +425,7 @@ export function CaptureFlow() {
             <label className="flex items-start gap-3 rounded-2xl bg-stone-50 p-3 text-sm">
               <input type="checkbox" className="mt-1 h-5 w-5 accent-teal-700" checked={sendImage} onChange={(e) => setSendImage(e.target.checked)} />
               <span>
-                <b>أرسل الصورة الأصلية أيضاً إلى نموذج يدعم الرؤية</b> (مفيد للأشكال والجداول والمعادلات). ستُرسل مع طلبات المساعدة إلى مزود
-                ذكاء اصطناعي قد يكون خارجياً، ولا تُخزَّن في أي مكان. إن لم يتوفر نموذج رؤية يُستعمل النص فقط.
+                <b>أرسل الصورة الأصلية أيضاً إلى نموذج يدعم الرؤية أثناء الحل</b> (مفيد للأشكال الهندسية والجداول والمعادلات).
               </span>
             </label>
           )}

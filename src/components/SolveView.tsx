@@ -115,17 +115,14 @@ export function SolveView() {
       setProblem({ kind: "text", text: "اكتب إجابتك أولاً في الخانة ثم اضغط «تحقّق من إجابتي»." });
       return;
     }
-    const offlineLike = !online || !user;
-    if (offlineLike) {
+    if (!online) {
       if (action === "check_answer" && localCheck()) {
         setNotice("تم التحقق حسابياً على جهازك دون ذكاء اصطناعي.");
         return;
       }
       setProblem({
         kind: "text",
-        text: !user
-          ? "المساعد الذكي يحتاج حساباً. سجّل الدخول لتفعيله. (التحقق الحسابي البسيط من الإجابة متاح بدون حساب للتمارين الحسابية الخالصة.)"
-          : "أنت غير متصل بالإنترنت، والمساعدة الذكية تحتاج اتصالاً. تمرينك محفوظ، وسيعمل المساعد عند عودة الاتصال. (التحقق الحسابي البسيط متاح دون اتصال للتمارين الحسابية الخالصة.)",
+        text: "أنت غير متصل بالإنترنت، والمساعدة الذكية تحتاج اتصالاً. تمرينك محفوظ، وسيعمل المساعد عند عودة الاتصال. (التحقق الحسابي البسيط متاح دون اتصال للتمارين الحسابية الخالصة.)",
       });
       return;
     }
@@ -141,6 +138,7 @@ export function SolveView() {
           exerciseText: ex.text,
           action,
           studentAnswer: answer.trim() || undefined,
+          history: ex.messages.slice(-16).map((m) => ({ role: m.role, action: m.action, content: m.content })),
           image: img && attach ? { mime: img.mime, data: img.data } : undefined,
         },
       });
@@ -247,7 +245,7 @@ export function SolveView() {
 
       {!loading && !user && (
         <div className="card flex flex-wrap items-center justify-between gap-3 bg-teal-50 ring-teal-200">
-          <p className="font-bold text-teal-900">سجّل الدخول لتفعيل المساعد الذكي وحفظ تمارينك بين أجهزتك.</p>
+          <p className="text-sm font-bold text-teal-900">💡 المساعد الذكي متاح لك مجاناً! سجّل دخولك إذا أردت حفظ تمارينك ومزامنتها بين أجهزتك.</p>
           <div className="flex gap-2">
             <Link href={`/login?next=${encodeURIComponent(`/solve?id=${ex.id}`)}`} className="btn-primary !min-h-10 !py-2">
               دخول
