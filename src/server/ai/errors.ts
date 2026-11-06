@@ -34,7 +34,8 @@ export function classifyHttpError(status: number, body: string, retryAfter?: str
   if (status === 402) return new ProviderError("quota", msg, { status });
   if (status === 408 || status === 504) return new ProviderError("timeout", msg, { status });
   if (status === 429) {
-    return QUOTA_RE.test(body)
+    const isPerMinute = /rate limit reached|tokens per minute|requests per minute|tpm|rpm/i.test(body);
+    return !isPerMinute && QUOTA_RE.test(body)
       ? new ProviderError("quota", msg, { status })
       : new ProviderError("rate_limit", msg, { status, retryAfterMs });
   }
@@ -47,27 +48,27 @@ export function classifyHttpError(status: number, body: string, retryAfter?: str
   return new ProviderError("unknown", msg, { status });
 }
 
-/** مدة الإيقاف المؤقت للمزود بعد كل نوع خطأ. */
+/** مدة الإيقاف المؤقت للمزود بعد كل نوع خطأ (قصيرة للمزودات المجانية لتعود للعمل فور انتهاء الدقيقة). */
 export function cooldownFor(err: ProviderError): number {
-  const min = 60_000;
+  const sec = 1_000;
   switch (err.kind) {
     case "quota":
-      return 30 * min;
+      return 60 * sec;
     case "auth":
-      return 6 * 60 * min;
+      return 15 * 60 * sec;
     case "rate_limit":
-      return Math.min(Math.max(err.retryAfterMs ?? min, 15_000), 10 * min);
+      return Math.min(Math.max(err.retryAfterMs ?? 20 * sec, 10 * sec), 90 * sec);
     case "unavailable":
-      return 5 * min;
+      return 30 * sec;
     case "timeout":
     case "network":
-      return 2 * min;
+      return 20 * sec;
     case "unsupported":
-      return 10 * min;
+      return 5 * 60 * sec;
     case "bad_request":
-      return 5 * min;
+      return 60 * sec;
     default:
-      return min;
+      return 30 * sec;
   }
 }
 

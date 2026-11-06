@@ -102,6 +102,148 @@ const KIND_HINT: Record<string, { baseUrl: string; model: string }> = {
   ollama: { baseUrl: "http://127.0.0.1:11434", model: "qwen2.5:3b" },
 };
 
+const PROVIDER_PRESETS: {
+  label: string;
+  name: string;
+  kind: string;
+  baseUrl: string;
+  model: string;
+  apiKeyEnv: string;
+  supportsVision: boolean;
+  priority: string;
+}[] = [
+  {
+    label: "Groq (رؤية + نصوص)",
+    name: "Groq Vision (Llama 4)",
+    kind: "openai-compatible",
+    baseUrl: "https://api.groq.com/openai/v1",
+    model: "meta-llama/llama-4-scout-17b-16e-instruct",
+    apiKeyEnv: "GROQ_API_KEY",
+    supportsVision: true,
+    priority: "10",
+  },
+  {
+    label: "Groq (سريع للنصوص)",
+    name: "Groq Fast (Llama 3.3 70B)",
+    kind: "openai-compatible",
+    baseUrl: "https://api.groq.com/openai/v1",
+    model: "llama-3.3-70b-versatile",
+    apiKeyEnv: "GROQ_API_KEY",
+    supportsVision: false,
+    priority: "15",
+  },
+  {
+    label: "Google AI Studio",
+    name: "Google AI Studio (Gemini 2.5 Flash)",
+    kind: "gemini",
+    baseUrl: "",
+    model: "gemini-2.5-flash",
+    apiKeyEnv: "GEMINI_API_KEY",
+    supportsVision: true,
+    priority: "20",
+  },
+  {
+    label: "OpenRouter",
+    name: "OpenRouter (Free Vision & Text)",
+    kind: "openai-compatible",
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "google/gemma-3-27b-it:free",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    supportsVision: true,
+    priority: "25",
+  },
+  {
+    label: "Hugging Face",
+    name: "Hugging Face (Qwen 2.5 VL)",
+    kind: "openai-compatible",
+    baseUrl: "https://router.huggingface.co/v1",
+    model: "Qwen/Qwen2.5-VL-72B-Instruct",
+    apiKeyEnv: "HUGGINGFACE_API_KEY",
+    supportsVision: true,
+    priority: "30",
+  },
+  {
+    label: "SambaNova",
+    name: "SambaNova (Llama 4 Maverick)",
+    kind: "openai-compatible",
+    baseUrl: "https://api.sambanova.ai/v1",
+    model: "Llama-4-Maverick-17B-128E-Instruct",
+    apiKeyEnv: "SAMBANOVA_API_KEY",
+    supportsVision: true,
+    priority: "35",
+  },
+  {
+    label: "GitHub Models",
+    name: "GitHub Models (GPT-4o mini)",
+    kind: "openai-compatible",
+    baseUrl: "https://models.inference.ai.azure.com",
+    model: "gpt-4o-mini",
+    apiKeyEnv: "GITHUB_TOKEN",
+    supportsVision: true,
+    priority: "40",
+  },
+  {
+    label: "Together AI",
+    name: "Together AI (Llama Vision)",
+    kind: "openai-compatible",
+    baseUrl: "https://api.together.xyz/v1",
+    model: "meta-llama/Llama-Vision-Free",
+    apiKeyEnv: "TOGETHER_API_KEY",
+    supportsVision: true,
+    priority: "45",
+  },
+  {
+    label: "NVIDIA NIM",
+    name: "NVIDIA NIM (Llama 3.2 90B Vision)",
+    kind: "openai-compatible",
+    baseUrl: "https://integrate.api.nvidia.com/v1",
+    model: "meta/llama-3.2-90b-vision-instruct",
+    apiKeyEnv: "NVIDIA_API_KEY",
+    supportsVision: true,
+    priority: "50",
+  },
+  {
+    label: "xAI Grok",
+    name: "xAI Grok",
+    kind: "openai-compatible",
+    baseUrl: "https://api.x.ai/v1",
+    model: "grok-2-vision-latest",
+    apiKeyEnv: "XAI_API_KEY",
+    supportsVision: true,
+    priority: "55",
+  },
+  {
+    label: "Cohere",
+    name: "Cohere (Command A)",
+    kind: "openai-compatible",
+    baseUrl: "https://api.cohere.ai/compatibility/v1",
+    model: "command-a-03-2025",
+    apiKeyEnv: "COHERE_API_KEY",
+    supportsVision: false,
+    priority: "60",
+  },
+  {
+    label: "Replicate",
+    name: "Replicate (Llama 3 70B)",
+    kind: "openai-compatible",
+    baseUrl: "https://api.replicate.com/v1",
+    model: "meta/meta-llama-3-70b-instruct",
+    apiKeyEnv: "REPLICATE_API_KEY",
+    supportsVision: false,
+    priority: "65",
+  },
+  {
+    label: "Pollinations (بدون مفتاح)",
+    name: "Pollinations AI (مجاني بدون مفتاح)",
+    kind: "openai-compatible",
+    baseUrl: "https://text.pollinations.ai/openai",
+    model: "openai",
+    apiKeyEnv: "",
+    supportsVision: false,
+    priority: "90",
+  },
+];
+
 const num = (s: string): number | null => (s.trim() === "" ? null : Number(s));
 
 function fromProvider(p: Provider): Form {
@@ -291,6 +433,37 @@ export function ProvidersAdmin() {
       {form && (
         <section className="card space-y-4 ring-2 ring-teal-300">
           <h2 className="text-lg font-extrabold">{form.id ? "تعديل المزود" : "مزود جديد"}</h2>
+          <div className="rounded-2xl bg-stone-50 p-3 space-y-2">
+            <p className="text-xs font-extrabold text-stone-600">⚡ تعبئة تلقائية سريعة لإعدادات المزود (اختر المزود ثم الصق مفتاحك فقط):</p>
+            <div className="flex flex-wrap gap-1.5">
+              {PROVIDER_PRESETS.map((pr) => (
+                <button
+                  key={pr.label}
+                  type="button"
+                  className="rounded-xl bg-white px-2.5 py-1 text-xs font-bold text-teal-900 shadow-sm ring-1 ring-stone-200 hover:bg-teal-50"
+                  onClick={() =>
+                    setForm((f) =>
+                      f
+                        ? {
+                            ...f,
+                            name: pr.name,
+                            kind: pr.kind,
+                            baseUrl: pr.baseUrl,
+                            model: pr.model,
+                            apiKeyEnv: pr.apiKeyEnv,
+                            supportsVision: pr.supportsVision,
+                            priority: pr.priority,
+                            enabled: true,
+                          }
+                        : f,
+                    )
+                  }
+                >
+                  + {pr.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="الاسم">
               <input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} />

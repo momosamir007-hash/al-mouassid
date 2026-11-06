@@ -221,9 +221,9 @@ export function SolveView() {
             </div>
           </div>
         ) : (
-          <p className="mt-1 whitespace-pre-wrap text-lg leading-8" dir="auto">
-            {ex.text}
-          </p>
+          <div className="mt-1 text-lg leading-8" dir="auto">
+            <RichText text={ex.text} />
+          </div>
         )}
         {!clarity.clear && !editing && (
           <ul className="mt-3 rounded-2xl bg-amber-50 p-3 text-sm text-amber-900">

@@ -2,13 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { assessClarity } from "@/lib/clarity";
+import { assessClarity, cleanOcrOutput } from "@/lib/clarity";
 import { LEVELS } from "@/lib/constants";
 import { api } from "@/lib/client/api";
 import { createExercise, setPrefs, usePrefs } from "@/lib/client/exerciseStore";
 import { useSubjects } from "@/lib/client/hooks";
 import { canvasToJpegBase64, loadImage, renderEdited, setHandoff, type EditOptions } from "@/lib/client/image";
 import { OCR_LANGS, recognize } from "@/lib/client/ocr";
+import { RichText } from "./RichText";
 
 type Stage = "pick" | "edit" | "review";
 type OcrSource = "vision" | "ai_refined" | "tesseract" | null;
@@ -68,6 +69,16 @@ export function CaptureFlow() {
     }
   }
 
+  function enterReview(extracted: string, src: OcrSource, prov: string | null, conf: number | null) {
+    setText(cleanOcrOutput(extracted));
+    setOcrSource(src);
+    setOcrProviderName(prov);
+    setConfidence(conf);
+    if (!prefs.level) setPrefs({ level: "middle", subject: prefs.subject || "math" });
+    else if (!prefs.subject) setPrefs({ subject: "math" });
+    setStage("review");
+  }
+
   /** الاستخراج التقليدي عبر Tesseract.js داخل المتصفح */
   async function runOcr() {
     if (!img) return;
@@ -75,13 +86,9 @@ export function CaptureFlow() {
     setError(null);
     setProgress({ pct: 0, status: "تحضير الاستخراج المحلي (Tesseract)" });
     try {
-      const canvas = renderEdited(img, { ...opts, maxSide: 2000 });
+      const canvas = renderEdited(img, { ...opts, maxSide: 1800 });
       const r = await recognize(canvas, prefs.ocrLang, (pct, status) => setProgress({ pct, status }));
-      setText(r.text);
-      setConfidence(r.confidence);
-      setOcrSource("tesseract");
-      setOcrProviderName(null);
-      setStage("review");
+      enterReview(r.text, "tesseract", null, r.confidence);
     } catch {
       setError("تعذّر تشغيل التعرف المحلي على النص. يمكنك استخدام زر «الاستخراج بالذكاء الاصطناعي» أو كتابة النص يدوياً.");
     } finally {
@@ -97,9 +104,9 @@ export function CaptureFlow() {
     setError(null);
     setProgress({ pct: 25, status: "🤖 جارٍ قراءة الصورة والمعادلات بالذكاء الاصطناعي…" });
     try {
-      // للذكاء الاصطناعي البصري نرسل الصورة بألوانها الطبيعية الواضحة (بدون تباين حاد قد يخفي الرموز)
-      const visionCanvas = renderEdited(img, { ...opts, enhance: false, maxSide: 1400 });
-      const b64 = canvasToJpegBase64(visionCanvas);
+      // للذكاء الاصطناعي البصري نرسل الصورة مضغوطة بوضوح عالٍ (سريعة الرفع من الهاتف)
+      const visionCanvas = renderEdited(img, { ...opts, enhance: false, maxSide: 1200 });
+      const b64 = canvasToJpegBase64(visionCanvas, 0.78);
 
       const res = await api<AiOcrResponse>("/api/ocr", {
         method: "POST",
@@ -110,17 +117,13 @@ export function CaptureFlow() {
       });
 
       if (res.mode === "vision" && res.text.trim()) {
-        setText(res.text);
-        setConfidence(null);
-        setOcrSource("vision");
-        setOcrProviderName(res.provider?.name ?? "AI Vision");
-        setStage("review");
+        enterReview(res.text, "vision", res.provider?.name ?? "AI Vision", null);
         return;
       }
 
       // إذا لم يتوفر نموذج رؤية في اللحظة الحالية، نشغّل Tesseract محلياً ثم نصلح النص بالذكاء الاصطناعي النصي
       setProgress({ pct: 50, status: "🔤 استخراج أولي محلي ثم تصحيح بالذكاء الاصطناعي…" });
-      const localCanvas = renderEdited(img, { ...opts, maxSide: 2000 });
+      const localCanvas = renderEdited(img, { ...opts, maxSide: 1800 });
       const localRes = await recognize(localCanvas, prefs.ocrLang, (pct, status) =>
         setProgress({ pct: Math.min(85, 50 + Math.round(pct * 0.35)), status }),
       );
@@ -133,11 +136,7 @@ export function CaptureFlow() {
             json: { rawOcrText: localRes.text, lang: prefs.ocrLang },
           });
           if (refined.text.trim()) {
-            setText(refined.text);
-            setConfidence(localRes.confidence);
-            setOcrSource("ai_refined");
-            setOcrProviderName(refined.provider?.name ?? "AI");
-            setStage("review");
+            enterReview(refined.text, "ai_refined", refined.provider?.name ?? "AI", localRes.confidence);
             return;
           }
         } catch {
@@ -145,22 +144,14 @@ export function CaptureFlow() {
         }
       }
 
-      setText(localRes.text);
-      setConfidence(localRes.confidence);
-      setOcrSource("tesseract");
-      setOcrProviderName(null);
-      setStage("review");
+      enterReview(localRes.text, "tesseract", null, localRes.confidence);
     } catch {
       // في حال انقطاع الإنترنت أو تعذر الخادم، نتحول تلقائياً إلى Tesseract المحلي
       try {
         setProgress({ pct: 10, status: "التحويل إلى الاستخراج المحلي (Tesseract)…" });
-        const canvas = renderEdited(img, { ...opts, maxSide: 2000 });
+        const canvas = renderEdited(img, { ...opts, maxSide: 1800 });
         const r = await recognize(canvas, prefs.ocrLang, (pct, status) => setProgress({ pct, status }));
-        setText(r.text);
-        setConfidence(r.confidence);
-        setOcrSource("tesseract");
-        setOcrProviderName(null);
-        setStage("review");
+        enterReview(r.text, "tesseract", null, r.confidence);
       } catch {
         setError("تعذّر استخراج النص من الصورة. تأكد من اتصالك بالإنترنت أو اكتب التمرين يدوياً.");
       }
@@ -179,7 +170,7 @@ export function CaptureFlow() {
       const imagePayload = img
         ? {
             mime: "image/jpeg" as const,
-            data: canvasToJpegBase64(renderEdited(img, { ...opts, enhance: false, maxSide: 1400 })),
+            data: canvasToJpegBase64(renderEdited(img, { ...opts, enhance: false, maxSide: 1200 }), 0.78),
           }
         : undefined;
 
@@ -192,7 +183,7 @@ export function CaptureFlow() {
         },
       });
       if (res.text.trim()) {
-        setText(res.text);
+        setText(cleanOcrOutput(res.text));
         setOcrSource(res.mode === "vision" ? "vision" : "ai_refined");
         setOcrProviderName(res.provider?.name ?? "AI");
       }
@@ -203,19 +194,24 @@ export function CaptureFlow() {
     }
   }
 
-  const level = prefs.level;
-  const subject = prefs.subject;
+  const level = prefs.level || "middle";
+  const subject = prefs.subject || "math";
   const clarity = assessClarity(text);
   const availableSubjects = subjects.filter((s) => !level || s.levels.includes(level));
   const canContinue = clarity.clear && Boolean(level) && Boolean(subject);
 
   function confirm() {
-    if (!canContinue || !level || !subject) return;
-    const ex = createExercise({ level, subject, text });
+    const cleaned = cleanOcrOutput(text);
+    const finalClarity = assessClarity(cleaned);
+    if (!finalClarity.clear) {
+      setText(cleaned);
+      return;
+    }
+    const ex = createExercise({ level, subject, text: cleaned });
     if (sendImage && img) {
-      const full = renderEdited(img, { ...opts, enhance: false, maxSide: 1280 });
+      const full = renderEdited(img, { ...opts, enhance: false, maxSide: 1200 });
       const thumb = renderEdited(img, { ...opts, enhance: false, maxSide: 120 });
-      setHandoff({ exerciseId: ex.id, mime: "image/jpeg", data: canvasToJpegBase64(full), preview: thumb.toDataURL("image/jpeg", 0.6) });
+      setHandoff({ exerciseId: ex.id, mime: "image/jpeg", data: canvasToJpegBase64(full, 0.78), preview: thumb.toDataURL("image/jpeg", 0.6) });
     } else setHandoff(null);
     router.push(`/solve?id=${encodeURIComponent(ex.id)}`);
   }
@@ -386,12 +382,29 @@ export function CaptureFlow() {
           )}
 
           <textarea className="input" rows={7} dir="auto" value={text} onChange={(e) => setText(e.target.value)} aria-label="النص المستخرج" />
+          {text.trim() && /\\frac|\\sqrt|\$|\^|_/.test(text) && (
+            <div className="rounded-2xl bg-teal-50/60 p-3 ring-1 ring-teal-200">
+              <p className="mb-1 text-xs font-extrabold text-teal-800">📐 معاينة عرض المعادلات والكسور:</p>
+              <div className="text-base" dir="auto">
+                <RichText text={text} />
+              </div>
+            </div>
+          )}
           {text.trim() && !clarity.clear && (
-            <ul className="rounded-2xl bg-rose-50 p-3 text-sm font-bold text-rose-900">
-              {clarity.reasons.map((r) => (
-                <li key={r}>⚠️ {r}</li>
-              ))}
-            </ul>
+            <div className="rounded-2xl bg-rose-50 p-3 text-sm font-bold text-rose-900 space-y-2">
+              <ul>
+                {clarity.reasons.map((r) => (
+                  <li key={r}>⚠️ {r}</li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                className="btn-soft !min-h-8 !px-3 !py-1 text-xs"
+                onClick={() => setText(cleanOcrOutput(text))}
+              >
+                🔧 إصلاح الرموز والأقواس تلقائياً
+              </button>
+            </div>
           )}
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
