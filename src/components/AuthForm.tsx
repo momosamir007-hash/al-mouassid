@@ -41,7 +41,12 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   }
 
   return (
-    <div className="mx-auto max-w-md">
+    <div className="auth-card-wrap mx-auto max-w-md">
+      <div className="auth-visual">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/images/books-illustration.svg" alt="كتب دراسية وقبعة تخرج" />
+        <div><b>مرحباً بك في المساعد</b><span>خطوتك نحو فهم أفضل تبدأ هنا</span></div>
+      </div>
       <form onSubmit={submit} className="card space-y-4">
         <h1 className="text-2xl font-extrabold">{isRegister ? "إنشاء حساب" : "تسجيل الدخول"}</h1>
         {isRegister && (
