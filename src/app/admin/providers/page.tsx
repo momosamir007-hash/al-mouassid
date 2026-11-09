@@ -16,7 +16,7 @@ export default function AdminProvidersPage() {
       <div className="card mx-auto max-w-md space-y-3 text-center">
         <div className="text-4xl">🔒</div>
         <h1 className="text-xl font-extrabold">هذه الصفحة لصاحب المنصة فقط</h1>
-        <p className="text-stone-600">أول حساب يُنشأ على المنصة يصبح مديراً تلقائياً.</p>
+        <p className="text-stone-600">صلاحية المدير تُمنح فقط برمز تأسيس خادمي لمرة واحدة أو بواسطة مدير حالي.</p>
         <Link href={user ? "/" : "/login?next=/admin/providers"} className="btn-primary mx-auto">
           {user ? "الرئيسية" : "تسجيل الدخول"}
         </Link>

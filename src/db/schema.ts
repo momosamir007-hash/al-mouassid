@@ -12,7 +12,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-/** المستخدمون. الدور: learner | admin (أول حساب يُنشأ يصبح مديراً). */
+/** المستخدمون. الدور: learner | admin (المدير الأول يحتاج رمز تأسيس خادم). */
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
@@ -48,7 +48,7 @@ export const subjects = pgTable("subjects", {
   enabled: boolean("enabled").notNull().default(true),
 });
 
-/** مزودو الذكاء الاصطناعي. المفاتيح: إما اسم متغير بيئة أو نص مشفّر AES-256-GCM. */
+/** مزودو الذكاء الاصطناعي. المفاتيح: اسم متغير بيئة من قائمة مسموحة أو نص مشفّر AES-256-GCM. */
 export const aiProviders = pgTable("ai_providers", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
@@ -138,3 +138,19 @@ export const helpMessages = pgTable(
   },
   (t) => [index("help_messages_exercise_idx").on(t.exerciseId, t.createdAt)],
 );
+
+
+/** محدد معدل موزع بين نسخ الخادم. */
+export const apiRateLimits = pgTable("api_rate_limits", {
+  key: text("key").primaryKey(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  hits: integer("hits").notNull().default(0),
+});
+
+/** سجل حذف دائم حتى تنتشر عمليات الحذف إلى بقية أجهزة الحساب. */
+export const exerciseDeletions = pgTable("exercise_deletions", {
+  id: serial("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  clientId: text("client_id").notNull(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique("exercise_deletions_user_client_uq").on(t.userId, t.clientId)]);

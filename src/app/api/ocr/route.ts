@@ -45,7 +45,7 @@ export async function POST(req: Request) {
   return handle("ocr.ai", async () => {
     const user = await getSessionUser();
     const key = user ? `ocr:u:${user.id}` : `ocr:ip:${clientIp(req)}`;
-    if (!rateLimit(key, 30, 10 * 60_000)) {
+    if (!(await rateLimit(key, 30, 10 * 60_000))) {
       throw new ApiError(429, "طلبات كثيرة خلال وقت قصير. انتظر قليلاً ثم أعد المحاولة.", "rate_limited");
     }
 

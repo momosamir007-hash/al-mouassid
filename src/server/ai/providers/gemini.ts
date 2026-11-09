@@ -33,7 +33,7 @@ export class GeminiAdapter implements ProviderAdapter {
         systemInstruction: { parts: [{ text: req.system }] },
         contents,
         generationConfig: {
-          maxOutputTokens: Math.max(req.maxTokens ?? 1200, 512),
+          maxOutputTokens: req.maxTokens ?? 1200,
           ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
         },
       },
@@ -44,10 +44,9 @@ export class GeminiAdapter implements ProviderAdapter {
     if (json.promptFeedback?.blockReason) {
       throw new ProviderError("bad_request", `حجب المزود المحتوى (${json.promptFeedback.blockReason})`);
     }
-    const text = json.candidates?.[0]?.content?.parts
-      ?.map((p) => p.text ?? "")
-      .join("")
-      .trim();
+    const candidate = json.candidates?.[0];
+    if (candidate?.finishReason === "MAX_TOKENS") throw new ProviderError("unavailable", "انتهى حد الرموز قبل اكتمال الإجابة؛ لم نعرض الرد المبتور.");
+    const text = candidate?.content?.parts?.map((p) => p.text ?? "").join("").trim();
     if (!text) throw new ProviderError("unavailable", "رد فارغ من المزود");
     return {
       text,

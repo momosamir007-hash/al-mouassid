@@ -2,12 +2,13 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { currentPolicy } from "@/server/ai";
 import { getProviderStatuses, STATE_AR } from "@/server/ai/status";
-import { handle, ok } from "@/server/utils/api";
+import { ApiError, clientIp, handle, ok } from "@/server/utils/api";
+import { rateLimit } from "@/server/utils/ratelimit";
 
 export const dynamic = "force-dynamic";
 
 /** حالة الخدمات (عامة): لا تتضمن أسراراً ولا تفاصيل أخطاء داخلية. */
-export async function GET() {
+export async function GET(req: Request) {
   return handle("status", async () => {
     let dbOk = true;
     try {
@@ -15,6 +16,7 @@ export async function GET() {
     } catch {
       dbOk = false;
     }
+    if (dbOk && !(await rateLimit(`status:${clientIp(req)}`, 30, 10 * 60_000))) throw new ApiError(429, "طلبات حالة كثيرة؛ حاول بعد قليل.", "rate_limited");
     let providers: {
       id: number;
       name: string;

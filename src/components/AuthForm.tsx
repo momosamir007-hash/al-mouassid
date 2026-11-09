@@ -26,7 +26,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         json: {
           email: String(fd.get("email")),
           password: String(fd.get("password")),
-          ...(isRegister ? { name: String(fd.get("name")), level: fd.get("level") || undefined } : {}),
+          ...(isRegister ? { name: String(fd.get("name")), level: fd.get("level") || undefined, bootstrapToken: String(fd.get("bootstrapToken") || "") || undefined } : {}),
         },
       });
       setUser(res.user);
@@ -41,12 +41,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   }
 
   return (
-    <div className="auth-card-wrap mx-auto max-w-md">
-      <div className="auth-visual">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/images/books-illustration.svg" alt="كتب دراسية وقبعة تخرج" />
-        <div><b>مرحباً بك في المساعد</b><span>خطوتك نحو فهم أفضل تبدأ هنا</span></div>
-      </div>
+    <div className="mx-auto max-w-md">
       <form onSubmit={submit} className="card space-y-4">
         <h1 className="text-2xl font-extrabold">{isRegister ? "إنشاء حساب" : "تسجيل الدخول"}</h1>
         {isRegister && (
@@ -56,6 +51,11 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
                 الاسم أو اللقب (لا تكتب اسمك الكامل)
               </label>
               <input id="name" name="name" required maxLength={40} className="input" autoComplete="nickname" />
+            </div>
+            <div>
+              <label className="label" htmlFor="bootstrapToken">رمز تأسيس المدير (اختياري، لصاحب المنصة فقط)</label>
+              <input id="bootstrapToken" name="bootstrapToken" type="password" maxLength={200} dir="ltr" className="input text-start" autoComplete="off" />
+              <p className="mt-1 text-xs text-stone-500">لا تملأه إلا إذا ضبطت BOOTSTRAP_ADMIN_TOKEN في إعدادات الخادم. الرمز يعمل لإنشاء أول مدير فقط.</p>
             </div>
             <div>
               <label className="label" htmlFor="level">

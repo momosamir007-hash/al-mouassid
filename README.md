@@ -18,9 +18,9 @@ npm run dev                     # تطوير  →  http://localhost:3000
 npm run build && npm start
 ```
 
-الاختبارات: `npx vitest run` (51 اختباراً). أداة مساعدة: `node scripts/fake-provider.mjs` تشغّل مزودين وهميين (انظر `docs/development/testing.md`).
+الاختبارات: `npm test` أو `npx vitest run`. أُضيفت اختبارات انحدار جديدة في هذه الحزمة، لكن يجب تشغيلها بعد تثبيت الاعتماديات وقبل النشر. أداة مساعدة: `node scripts/fake-provider.mjs` تشغّل مزودين وهميين (انظر `docs/development/testing.md`).
 
-أول حساب يُسجَّل يصبح **مديراً** تلقائياً (أو البريد في `ADMIN_EMAIL`). من لوحة `/admin/providers` تُدار المزودات والمواد.
+لا تُمنح صلاحية المدير تلقائياً. أنشئ المدير الأول باستخدام `BOOTSTRAP_ADMIN_TOKEN` كما هو موضح أدناه. من لوحة `/admin/providers` تُدار المزودات والمواد.
 
 ## متغيرات البيئة
 
@@ -31,7 +31,9 @@ npm run build && npm start
 | `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` | تُفعّل المزودين الافتراضيين تلقائياً عند أول تشغيل |
 | `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | نموذج محلي على خادم المنصة |
 | `AI_ROUTING_POLICY` | `quality` (افتراضي) أو `cost` أو `speed` |
-| `ADMIN_EMAIL` | بريد يُمنح دور المدير عند التسجيل |
+| `BOOTSTRAP_ADMIN_TOKEN` | رمز تأسيس المدير الأول لمرة واحدة؛ يُحذف بعد الاستخدام |
+| `APP_SECRET_PREVIOUS` | المفتاح السابق مؤقتاً أثناء تدوير `APP_SECRET` |
+| `PG_POOL_MAX` | الحد الأقصى لاتصالات PostgreSQL لكل نسخة (1–5، الافتراضي 2) |
 
 لا تُرسل أي مفاتيح إلى المتصفح أبداً؛ كل استدعاءات المزودين من الخادم فقط.
 
@@ -39,7 +41,7 @@ npm run build && npm start
 
 1. وفّر PostgreSQL وضع `DATABASE_URL` و`APP_SECRET` (`openssl rand -hex 32`).
 2. `npx drizzle-kit push` ثم `npm run build && npm start` (المنفذ 3000).
-3. ضع التطبيق خلف وكيل عكسي يفعّل **HTTPS** (Caddy/Nginx). الكوكي يصبح `Secure` تلقائياً عند `X-Forwarded-Proto: https`، وHTTPS شرط لتثبيت PWA وعمل Service Worker.
+3. ضع التطبيق خلف وكيل عكسي يفعّل **HTTPS** (Caddy/Nginx). الكوكي يصبح `Secure` تلقائياً في `NODE_ENV=production`، وHTTPS شرط لتثبيت PWA وعمل Service Worker.
 4. (اختياري) ثبّت Ollama على الخادم: `ollama pull qwen2.5:3b` ثم تحقق من `/status`.
 
 ## الوظائف: ما يعمل وما لم يُنفَّذ
@@ -51,3 +53,21 @@ npm run build && npm start
 **مكتوب لكن لم يُختبر بمفتاح/بيئة حقيقية هنا:** استدعاء OpenAI وGemini وClaude الحقيقيين (اختُبرت المحوّلات ببروتوكولاتها عبر خوادم HTTP وهمية؛ لا مفاتيح حقيقية في بيئة التطوير) · Ollama حقيقي (اختُبر ببروتوكوله فقط) · OCR عبر Tesseract.js في متصفح حقيقي (يحتاج اتصالاً أول مرة لتنزيل ملفات اللغة؛ لم يُختبر آلياً) · الكاميرا على جهاز فعلي.
 
 **لم يُنفَّذ بعد (بصراحة):** تشغيل نموذج داخل المتصفح عبر WebLLM/WebGPU (يوجد **فحص إمكانات فقط**) · استعمال Ollama الموجود على جهاز المستخدم (كشف فقط) · SQLite · تغليف Capacitor/APK (دراسة في `docs/development/capacitor.md`) · اختبارات واجهة آلية (E2E في متصفح) واختبارات أجهزة حقيقية.
+
+
+## تأسيس حساب المدير بأمان
+
+لم يعد أول حساب مسجّل يحصل على صلاحية المدير تلقائياً، ولا تكفي مطابقة البريد الإلكتروني. أنشئ قيمة عشوائية طويلة في متغير الخادم `BOOTSTRAP_ADMIN_TOKEN`، ثم أدخلها في حقل «رمز تأسيس المدير» أثناء إنشاء حسابك الأول. بعد نجاح إنشاء المدير احذف المتغير من إعدادات الاستضافة. الرمز لا يعمل إلا إذا لم يكن هناك مدير مسجل، ويُستهلك ضمن قفل قاعدة البيانات.
+
+## تحديث مخطط قاعدة البيانات
+
+بعد تحديث الملفات، طبّق مخطط Drizzle (`npx drizzle-kit push`) أو نفّذ ملف `drizzle/0001_security_sync_tables.sql` على قاعدة البيانات الحالية. لا تنشر الكود قبل إنشاء جدولي `api_rate_limits` و`exercise_deletions`.
+
+
+### تدوير APP_SECRET دون فقد المفاتيح
+
+1. ضع القيمة الجديدة في `APP_SECRET` والقيمة القديمة في `APP_SECRET_PREVIOUS`.
+2. سجّل الدخول كمدير واستدعِ `POST /api/admin/providers/rotate-secrets` مرة واحدة.
+3. بعد نجاح العملية، احذف `APP_SECRET_PREVIOUS` من إعدادات البيئة.
+
+لا تحذف القيمة القديمة قبل نجاح عملية التدوير.

@@ -16,6 +16,10 @@ describe("المحرك الحسابي الآمن", () => {
     expect(evaluateExpression("(12 + 7) × 3")).toBe(57);
     expect(evaluateExpression("2^3^2")).toBe(512);
     expect(evaluateExpression("-3 + 5")).toBe(2);
+    expect(evaluateExpression("-2^2")).toBe(-4);
+    expect(evaluateExpression("(-2)^2")).toBe(4);
+    expect(evaluateExpression("2^-2")).toBe(0.25);
+    expect(evaluateExpression(".5 + ٠٫٥")).toBe(1);
     expect(evaluateExpression("٣ + ٤")).toBe(7);
     expect(evaluateExpression("10 ÷ 4")).toBe(2.5);
   });
@@ -33,6 +37,8 @@ describe("المحرك الحسابي الآمن", () => {
   it("يتحقق من إجابة الطالب ويكتشف الخطأ الشائع", () => {
     expect(checkArithmeticAnswer("12 + 7 × 3", "33")?.correct).toBe(true);
     expect(checkArithmeticAnswer("12 + 7 × 3", "= ٣٣")?.correct).toBe(true);
+    expect(checkArithmeticAnswer("احسب -3 + 5", "2")?.correct).toBe(true);
+    expect(checkArithmeticAnswer("احسب 3 + 4", "لا أعرف، ربما 7 أو 8")?.given).toBeUndefined();
     const wrong = checkArithmeticAnswer("12 + 7 × 3", "57");
     expect(wrong?.correct).toBe(false);
     expect(wrong?.commonError).toBe("order_of_operations");
@@ -49,6 +55,12 @@ describe("وضوح التمرين (بوابة OCR)", () => {
     expect(assessClarity("احسب (3 + 4 × 2").clear).toBe(false);
     expect(assessClarity("12 + 7 ×").clear).toBe(false);
     expect(assessClarity("a\uFFFDb\uFFFD c\uFFFD d").clear).toBe(false);
+  });
+  it("يحافظ تنظيف OCR على القيمة المطلقة وعلامات عدم اليقين ولا يعيد موازنة الأقواس", async () => {
+    const { cleanOcrOutput } = await import("@/lib/clarity");
+    expect(cleanOcrOutput("|x| + ~2 [unclear]")).toBe("|x| + ~2 [unclear]");
+    expect(assessClarity(cleanOcrOutput("احسب [unclear] 2 + 3")).clear).toBe(false);
+    expect(cleanOcrOutput("10/((1+2))-4)")).toBe("10/((1+2))-4)");
   });
   it("يقبل تمريناً واضحاً", () => {
     expect(assessClarity("حل المعادلة التالية: 2x + 3 = 7").clear).toBe(true);
@@ -103,6 +115,7 @@ describe("منطق المساعدة التدريجية", () => {
   it("يحذف البيانات الشخصية", () => {
     expect(redactPII("راسلني على ali@example.com أو 0555 123 456")).not.toMatch(/ali@|0555/);
     expect(redactPII("احسب 12 + 7 × 3")).toBe("احسب 12 + 7 × 3");
+    expect(redactPII("اتصل ٠٥٥٠١٢٣٤٥٦")).toContain("[رقم محذوف]");
   });
 });
 

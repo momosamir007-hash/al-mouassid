@@ -359,8 +359,11 @@ export function RichText({ text }: { text: string }) {
     const line = raw.trimEnd();
     const trimmed = line.trim();
 
-    // جدول Markdown يبدأ وينتهي بـ |
-    if (trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.length > 2) {
+    // لا نعتبر |x| قيمة مطلقة جدولاً؛ يجب وجود صف فاصل Markdown حقيقي.
+    const pipeDelimited = trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.length > 2;
+    const separatorNext = idx + 1 < lines.length && /^\|?\s*:?-{3,}.*\|.*-{3,}.*\|?$/.test(lines[idx + 1].trim());
+    const isTableRow = pipeDelimited && (tableRows !== null || separatorNext || /^\|?\s*:?-{3,}\s*\|?$/.test(trimmed));
+    if (isTableRow) {
       flushList();
       if (!tableRows) tableRows = [];
       const cells = trimmed

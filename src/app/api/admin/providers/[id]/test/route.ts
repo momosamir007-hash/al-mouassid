@@ -32,40 +32,21 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     }
 
     const started = Date.now();
+    let out;
     try {
-      const out = await adapter.chat({
-        system: "Reply with the single word OK.",
-        messages: [{ role: "user", content: "ping" }],
-        maxTokens: 256,
-        temperature: 0,
-      });
-      const latencyMs = Date.now() - started;
-      await store.recordSuccess(id, {
-        task: "test",
-        userId: admin.id,
-        latencyMs,
-        inputTokens: out.inputTokens,
-        outputTokens: out.outputTokens,
-        costUsd:
-          out.inputTokens != null && out.outputTokens != null && (row.costInPer1k != null || row.costOutPer1k != null)
-            ? (out.inputTokens / 1000) * (row.costInPer1k ?? 0) + (out.outputTokens / 1000) * (row.costOutPer1k ?? 0)
-            : null,
-      });
-      await db.update(aiProviders).set({ lastCheckedAt: new Date() }).where(eq(aiProviders.id, id));
-      return ok({ ok: true, latencyMs, local: ready });
+      out = await adapter.chat({ system: "Reply with the single word OK.", messages: [{ role: "user", content: "ping" }], maxTokens: 256, temperature: 0 });
     } catch (e) {
-      const err =
-        e instanceof ProviderError ? e : new ProviderError("unknown", redactSecret((e as Error).message, resolveApiKey(row)));
-      await store.recordFailure(id, {
-        task: "test",
-        userId: admin.id,
-        kind: err.kind,
-        message: err.message,
-        latencyMs: Date.now() - started,
-        cooldownMs: 0,
-      });
+      const err = e instanceof ProviderError ? e : new ProviderError("unknown", redactSecret((e as Error).message, resolveApiKey(row)));
+      try { await store.recordFailure(id, { task: "test", userId: admin.id, kind: err.kind, message: err.message, latencyMs: Date.now() - started, cooldownMs: 0 }); } catch { /* لا نخفي نتيجة الاختبار بسبب فشل التسجيل */ }
       await db.update(aiProviders).set({ lastCheckedAt: new Date() }).where(eq(aiProviders.id, id));
       return ok({ ok: false, stage: "chat", kind: err.kind, message: err.message });
     }
+    const latencyMs = Date.now() - started;
+    const costUsd = out.inputTokens != null && out.outputTokens != null && row.costInPer1k != null && row.costOutPer1k != null
+      ? (out.inputTokens / 1000) * row.costInPer1k + (out.outputTokens / 1000) * row.costOutPer1k : null;
+    try { await store.recordSuccess(id, { task: "test", userId: admin.id, latencyMs, inputTokens: out.inputTokens, outputTokens: out.outputTokens, costUsd }); }
+    catch { /* الاتصال نجح حتى لو تعذر تسجيل الاستهلاك */ }
+    await db.update(aiProviders).set({ lastCheckedAt: new Date() }).where(eq(aiProviders.id, id));
+    return ok({ ok: true, latencyMs, local: ready });
   });
 }

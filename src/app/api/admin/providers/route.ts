@@ -50,7 +50,7 @@ export async function GET() {
           key: {
             source: keySource(row),
             hint: row.keyHint,
-            envName: row.apiKeyEnv,
+            envName: keySource(row) === "env" ? row.apiKeyEnv : null,
             envPresent: row.apiKeyEnv ? Boolean(process.env[row.apiKeyEnv]) : false,
           },
           usageToday: { requests: stats.today.requests, costUsd: stats.today.costUsd, percent: pct, alert: pct >= row.alertPercent && pct > 0 },

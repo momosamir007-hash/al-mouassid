@@ -19,7 +19,8 @@ export const maxDuration = 120;
 const schema = z.object({
   clientId: z.string().min(1).max(64),
   level: z.enum(LEVEL_IDS),
-  subject: z.string().min(1).max(40),
+  subject: z.string().trim().toLowerCase().regex(/^[a-z0-9-]{2,40}$/),
+  updatedAt: z.number().int().positive().refine(v => v <= Date.now() + 5 * 60_000, "التوقيت في المستقبل بشكل غير معقول").optional(),
   exerciseText: z.string().min(1).max(4000),
   action: z.enum(HELP_ACTION_IDS),
   studentAnswer: z.string().max(2000).optional(),
@@ -42,20 +43,21 @@ const schema = z.object({
 });
 
 async function subjectName(slug: string): Promise<string> {
-  try {
-    const [row] = await db.select().from(subjects).where(eq(subjects.slug, slug)).limit(1);
-    if (row) return row.nameAr;
-  } catch {
-    /* نكمل بالقيمة الافتراضية */
+  const [row] = await db.select().from(subjects).where(eq(subjects.slug, slug)).limit(1);
+  if (row) {
+    if (row.enabled) return row.nameAr;
+    throw new ApiError(400, "المادة المختارة معطّلة حالياً.", "invalid_subject");
   }
-  return DEFAULT_SUBJECTS.find((s) => s.slug === slug)?.nameAr ?? slug;
+  const fallback = DEFAULT_SUBJECTS.find((s) => s.slug === slug);
+  if (fallback) return fallback.nameAr;
+  throw new ApiError(400, "المادة المختارة غير معتمدة.", "invalid_subject");
 }
 
 export async function POST(req: Request) {
   return handle("help", async () => {
     const user = await getSessionUser();
     const rateKey = user ? `help:${user.id}` : `help:ip:${clientIp(req)}`;
-    if (!rateLimit(rateKey, 40, 10 * 60_000)) {
+    if (!(await rateLimit(rateKey, 40, 10 * 60_000))) {
       throw new ApiError(429, "طلبات كثيرة خلال وقت قصير. خذ استراحة قصيرة ثم تابع.", "rate_limited");
     }
     const body = await parseBody(req, schema);
@@ -70,7 +72,10 @@ export async function POST(req: Request) {
           level: body.level,
           subject: body.subject,
           text: body.exerciseText,
-        });
+        }, body.updatedAt ? new Date(body.updatedAt) : new Date());
+        if (exercise.text !== body.exerciseText || exercise.subject !== body.subject || exercise.level !== body.level) {
+          throw new ApiError(409, "تغيّر التمرين على جهاز آخر. حدّث الصفحة قبل طلب المساعدة.", "exercise_conflict");
+        }
         exerciseId = exercise.id;
         history = await loadHistory(exercise.id);
       }
@@ -84,6 +89,7 @@ export async function POST(req: Request) {
           exerciseText: body.exerciseText,
           studentAnswer: body.studentAnswer,
           history,
+          trustedHistory: Boolean(user),
           image: body.image ?? null,
           userId: user?.id ?? null,
         },

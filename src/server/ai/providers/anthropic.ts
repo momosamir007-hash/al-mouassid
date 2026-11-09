@@ -6,6 +6,7 @@ import type { AdapterConfig } from "./config";
 interface AnthropicResponse {
   content?: { type: string; text?: string }[];
   usage?: { input_tokens?: number; output_tokens?: number };
+  stop_reason?: string | null;
 }
 
 export class AnthropicAdapter implements ProviderAdapter {
@@ -47,6 +48,8 @@ export class AnthropicAdapter implements ProviderAdapter {
       secret: this.cfg.apiKey,
     })) as AnthropicResponse;
 
+    if (json.stop_reason === "max_tokens") throw new ProviderError("unavailable", "انتهى حد الرموز قبل اكتمال الإجابة؛ لم نعرض الرد المبتور.");
+    if (json.stop_reason === "max_tokens") throw new ProviderError("unavailable", "انتهى حد الرموز قبل اكتمال الإجابة؛ لم نعرض الرد المبتور.");
     const text = json.content
       ?.filter((b) => b.type === "text")
       .map((b) => b.text ?? "")

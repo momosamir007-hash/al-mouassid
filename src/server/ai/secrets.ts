@@ -19,12 +19,19 @@ export function encryptSecret(plain: string, secret = process.env.APP_SECRET): s
 }
 
 export function decryptSecret(payload: string, secret = process.env.APP_SECRET): string {
-  if (!secret) throw new Error("APP_SECRET غير مضبوط");
   const [v, iv, tag, ct] = payload.split(".");
   if (v !== "v1" || !iv || !tag || !ct) throw new Error("صيغة سر غير صالحة");
-  const decipher = createDecipheriv("aes-256-gcm", keyFor(secret), Buffer.from(iv, "base64url"));
-  decipher.setAuthTag(Buffer.from(tag, "base64url"));
-  return Buffer.concat([decipher.update(Buffer.from(ct, "base64url")), decipher.final()]).toString("utf8");
+  const candidates = [...new Set([secret, process.env.APP_SECRET_PREVIOUS].filter((x): x is string => Boolean(x && x.length >= 16)))];
+  if (!candidates.length) throw new Error("APP_SECRET غير مضبوط");
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    try {
+      const decipher = createDecipheriv("aes-256-gcm", keyFor(candidate), Buffer.from(iv, "base64url"));
+      decipher.setAuthTag(Buffer.from(tag, "base64url"));
+      return Buffer.concat([decipher.update(Buffer.from(ct, "base64url")), decipher.final()]).toString("utf8");
+    } catch (e) { lastError = e; }
+  }
+  throw lastError instanceof Error ? lastError : new Error("تعذر فك تشفير المفتاح المخزن");
 }
 
 export function keyHintOf(key: string): string {

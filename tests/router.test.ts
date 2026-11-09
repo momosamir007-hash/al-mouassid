@@ -44,6 +44,28 @@ describe("AI Router — التحويل التلقائي", () => {
     },
   );
 
+
+  it("ينتقل إلى البديل إذا رمى فحص الجاهزية استثناءً", async () => {
+    const broken = {
+      async checkReady() { throw new Error("readiness crashed"); },
+      async chat() { throw new Error("must not be called"); },
+    } as unknown as ProviderAdapter;
+    const good = fakeAdapter(async () => "البديل يعمل");
+    const store = new MemoryStore([provider({ id: 1, name: "Broken", priority: 1 }), provider({ id: 2, name: "Good", priority: 2 })]);
+    const result = await makeRouter(store, { 1: broken, 2: good }).run({ task: "explain", request: req });
+    expect(result.text).toBe("البديل يعمل");
+    expect(result.attempts[0].outcome).toBe("failed");
+  });
+
+  it("لا يهدر إجابة ناجحة إذا فشل تسجيل الاستهلاك", async () => {
+    const good = fakeAdapter(async () => "إجابة ناجحة");
+    const store = new MemoryStore([provider({ id: 1, name: "Good" })]);
+    store.recordSuccess = async () => { throw new Error("database write failed"); };
+    const result = await makeRouter(store, { 1: good }).run({ task: "explain", request: req });
+    expect(result.text).toBe("إجابة ناجحة");
+    expect(good.calls).toBe(1);
+  });
+
   it("يتخطى المزود الموقوف مؤقتاً (cooldown) دون استدعائه", async () => {
     const a = fakeAdapter(async () => "x");
     const b = fakeAdapter(async () => "من B");

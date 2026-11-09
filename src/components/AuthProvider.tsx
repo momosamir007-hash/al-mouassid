@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, ApiClientError } from "@/lib/client/api";
-import { clearAllLocal, syncWithServer, unsyncedCount } from "@/lib/client/exerciseStore";
+import { archiveLocalData, clearAllLocal, restoreLocalData, setPrefs, syncWithServer, unsyncedCount } from "@/lib/client/exerciseStore";
 import { useOnline } from "@/lib/client/hooks";
 
 export interface User {
@@ -42,20 +42,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const online = useOnline();
 
   const adopt = useCallback((u: User | null) => {
-    setUserState(u);
     try {
       if (u) {
-        const owner = localStorage.getItem(OWNER);
-        // جهاز مشترك: لا نخلط بيانات حساب بحساب آخر
-        if (owner && owner !== u.id) clearAllLocal();
+        const owner = localStorage.getItem(OWNER) ?? "guest";
+        if (owner !== u.id) {
+          if (!archiveLocalData(owner)) { setSyncMessage("تعذر حفظ بيانات الحساب السابق محلياً؛ لم نخلط بيانات الحسابين."); return; }
+          if (!restoreLocalData(u.id)) { setSyncMessage("تعذر استعادة بيانات الحساب الحالي من التخزين المحلي."); return; }
+        }
         localStorage.setItem(OWNER, u.id);
         localStorage.setItem(USER_CACHE, JSON.stringify(u));
       } else {
+        const owner = localStorage.getItem(OWNER);
+        if (owner && archiveLocalData(owner)) {
+          clearAllLocal();
+          setPrefs({ level: null, subject: null, showProvider: false, ocrLang: "ara+eng" });
+          localStorage.removeItem(OWNER);
+        }
         localStorage.removeItem(USER_CACHE);
       }
-    } catch {
-      /* تجاهل */
-    }
+    } catch { /* تجاهل */ }
+    setUserState(u);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -98,19 +104,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user, online, loading, syncNow]);
 
   const logout = useCallback(async () => {
-    if (unsyncedCount() > 0 && navigator.onLine) await syncWithServer();
+    if (unsyncedCount() > 0) {
+      const result = await syncWithServer();
+      if (!result.ok) {
+        setSyncMessage(`لم يتم تسجيل الخروج حفاظاً على بياناتك: ${result.message}`);
+        return;
+      }
+    }
     try {
       await api("/api/auth/logout", { method: "POST" });
     } catch {
-      /* حتى لو فشل نُنظّف محلياً */
+      setSyncMessage("تعذر تأكيد تسجيل الخروج من الخادم؛ احتفظنا بالبيانات المحلية.");
+      return;
     }
     clearAllLocal();
-    try {
-      localStorage.removeItem(OWNER);
-      localStorage.removeItem(USER_CACHE);
-    } catch {
-      /* تجاهل */
-    }
+    try { localStorage.removeItem(OWNER); localStorage.removeItem(USER_CACHE); } catch { /* تجاهل */ }
     setUserState(null);
   }, []);
 

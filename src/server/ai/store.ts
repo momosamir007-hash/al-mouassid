@@ -7,6 +7,7 @@ import type { ErrorKind, ProviderKind, ProviderRecord, ProviderStore, UsageToday
 
 export type ProviderRow = typeof aiProviders.$inferSelect;
 
+const ALLOWED_PROVIDER_ENV = new Set(["OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "HUGGINGFACE_API_KEY", "SAMBANOVA_API_KEY", "GITHUB_TOKEN", "TOGETHER_API_KEY", "NVIDIA_API_KEY", "XAI_API_KEY", "COHERE_API_KEY", "REPLICATE_API_KEY"]);
 export function resolveApiKey(row: ProviderRow): string | null {
   if (row.apiKeyEnc) {
     try {
@@ -15,13 +16,13 @@ export function resolveApiKey(row: ProviderRow): string | null {
       return null;
     }
   }
-  if (row.apiKeyEnv) return process.env[row.apiKeyEnv] || null;
+  if (row.apiKeyEnv && ALLOWED_PROVIDER_ENV.has(row.apiKeyEnv)) return process.env[row.apiKeyEnv] || null;
   return null;
 }
 
 export function keySource(row: ProviderRow): "stored" | "env" | "none" {
   if (row.apiKeyEnc) return "stored";
-  if (row.apiKeyEnv) return "env";
+  if (row.apiKeyEnv && ALLOWED_PROVIDER_ENV.has(row.apiKeyEnv)) return "env";
   return "none";
 }
 
@@ -62,10 +63,12 @@ let seeding: Promise<void> | null = null;
 export function ensureDefaultProviders(): Promise<void> {
   if (!seeding) {
     seeding = (async () => {
-      const [{ n }] = await db.select({ n: count() }).from(aiProviders);
-      if (n > 0) return;
-      const allTasks = [...TASKS];
-      await db.insert(aiProviders).values([
+      await db.transaction(async tx => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(741852964)`);
+        const [{ n }] = await tx.select({ n: count() }).from(aiProviders);
+        if (n > 0) return;
+        const allTasks = [...TASKS];
+        await tx.insert(aiProviders).values([
         {
           name: "Groq Vision (Llama 4 - قراءة الصور والكاميرا)",
           kind: "openai-compatible",
@@ -76,8 +79,6 @@ export function ensureDefaultProviders(): Promise<void> {
           enabled: Boolean(process.env.GROQ_API_KEY),
           tasks: allTasks,
           supportsVision: true,
-          costInPer1k: 0,
-          costOutPer1k: 0,
         },
         {
           name: "Groq Fast (Llama 3.3 70B - نصوص ورياضيات)",
@@ -89,8 +90,6 @@ export function ensureDefaultProviders(): Promise<void> {
           enabled: Boolean(process.env.GROQ_API_KEY),
           tasks: allTasks,
           supportsVision: false,
-          costInPer1k: 0,
-          costOutPer1k: 0,
         },
         {
           name: "Google AI Studio (Gemini 2.5 Flash)",
@@ -112,8 +111,6 @@ export function ensureDefaultProviders(): Promise<void> {
           enabled: Boolean(process.env.OPENROUTER_API_KEY),
           tasks: allTasks,
           supportsVision: true,
-          costInPer1k: 0,
-          costOutPer1k: 0,
         },
         {
           name: "Hugging Face (Qwen 2.5 VL - رؤية ونصوص)",
@@ -125,8 +122,6 @@ export function ensureDefaultProviders(): Promise<void> {
           enabled: Boolean(process.env.HUGGINGFACE_API_KEY),
           tasks: allTasks,
           supportsVision: true,
-          costInPer1k: 0,
-          costOutPer1k: 0,
         },
         {
           name: "SambaNova (Llama 4 Maverick - رؤية ونصوص)",
@@ -138,8 +133,6 @@ export function ensureDefaultProviders(): Promise<void> {
           enabled: Boolean(process.env.SAMBANOVA_API_KEY),
           tasks: allTasks,
           supportsVision: true,
-          costInPer1k: 0,
-          costOutPer1k: 0,
         },
         {
           name: "GitHub Models (GPT-4o mini - رؤية ونصوص)",
@@ -151,8 +144,6 @@ export function ensureDefaultProviders(): Promise<void> {
           enabled: Boolean(process.env.GITHUB_TOKEN),
           tasks: allTasks,
           supportsVision: true,
-          costInPer1k: 0,
-          costOutPer1k: 0,
         },
         {
           name: "Together AI (Llama Vision - رؤية ونصوص)",
@@ -164,8 +155,6 @@ export function ensureDefaultProviders(): Promise<void> {
           enabled: Boolean(process.env.TOGETHER_API_KEY),
           tasks: allTasks,
           supportsVision: true,
-          costInPer1k: 0,
-          costOutPer1k: 0,
         },
         {
           name: "NVIDIA NIM (Llama 3.2 90B Vision - رؤية ونصوص)",
@@ -177,8 +166,6 @@ export function ensureDefaultProviders(): Promise<void> {
           enabled: Boolean(process.env.NVIDIA_API_KEY),
           tasks: allTasks,
           supportsVision: true,
-          costInPer1k: 0,
-          costOutPer1k: 0,
         },
         {
           name: "xAI Grok (رؤية ونصوص)",
@@ -223,8 +210,6 @@ export function ensureDefaultProviders(): Promise<void> {
           status: "ok",
           tasks: allTasks,
           supportsVision: false,
-          costInPer1k: 0,
-          costOutPer1k: 0,
         },
         {
           name: "Ollama (محلي)",
@@ -237,8 +222,11 @@ export function ensureDefaultProviders(): Promise<void> {
           tasks: allTasks,
           supportsVision: false,
           timeoutMs: 90000,
+          costInPer1k: 0,
+          costOutPer1k: 0,
         },
-      ]);
+        ]);
+      });
     })().catch((e) => {
       seeding = null;
       throw e;
@@ -273,20 +261,12 @@ export class DbProviderStore implements ProviderStore {
       costUsd: number | null;
     },
   ): Promise<void> {
-    await db.insert(aiUsage).values({
-      providerId,
-      userId: info.userId ?? null,
-      task: info.task,
-      ok: true,
-      inputTokens: info.inputTokens,
-      outputTokens: info.outputTokens,
-      costUsd: info.costUsd,
-      latencyMs: info.latencyMs,
+    await db.transaction(async tx => {
+      await tx.insert(aiUsage).values({ providerId, userId: info.userId ?? null, task: info.task, ok: true,
+        inputTokens: info.inputTokens, outputTokens: info.outputTokens, costUsd: info.costUsd, latencyMs: info.latencyMs });
+      await tx.update(aiProviders).set({ status: "ok", lastOkAt: new Date(), lastLatencyMs: info.latencyMs, cooldownUntil: null })
+        .where(eq(aiProviders.id, providerId));
     });
-    await db
-      .update(aiProviders)
-      .set({ status: "ok", lastOkAt: new Date(), lastLatencyMs: info.latencyMs, cooldownUntil: null })
-      .where(eq(aiProviders.id, providerId));
   }
 
   async recordFailure(
@@ -301,23 +281,11 @@ export class DbProviderStore implements ProviderStore {
     },
   ): Promise<void> {
     const msg = info.message.slice(0, 300);
-    await db.insert(aiUsage).values({
-      providerId,
-      userId: info.userId ?? null,
-      task: info.task,
-      ok: false,
-      errorKind: info.kind,
-      errorMessage: msg,
-      latencyMs: info.latencyMs,
+    await db.transaction(async tx => {
+      await tx.insert(aiUsage).values({ providerId, userId: info.userId ?? null, task: info.task, ok: false,
+        errorKind: info.kind, errorMessage: msg, latencyMs: info.latencyMs });
+      await tx.update(aiProviders).set({ status: info.kind, lastError: msg, lastErrorAt: new Date(),
+        cooldownUntil: new Date(Date.now() + info.cooldownMs) }).where(eq(aiProviders.id, providerId));
     });
-    await db
-      .update(aiProviders)
-      .set({
-        status: info.kind,
-        lastError: msg,
-        lastErrorAt: new Date(),
-        cooldownUntil: new Date(Date.now() + info.cooldownMs),
-      })
-      .where(eq(aiProviders.id, providerId));
   }
 }

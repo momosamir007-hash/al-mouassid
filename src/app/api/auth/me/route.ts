@@ -1,7 +1,7 @@
-import { eq } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { users } from "@/db/schema";
+import { aiUsage, users } from "@/db/schema";
 import { LEVEL_IDS } from "@/lib/constants";
 import { verifyPassword } from "@/server/auth/password";
 import { endSession, getSessionUser, requireUser } from "@/server/auth/session";
@@ -42,7 +42,15 @@ export async function DELETE(req: Request) {
     if (!row || !(await verifyPassword(body.password, row.passwordHash))) {
       throw new ApiError(401, "كلمة المرور غير صحيحة.", "invalid_credentials");
     }
-    await db.delete(users).where(eq(users.id, user.id));
+    await db.transaction(async tx => {
+      if (row.role === "admin") {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(741852963)`);
+        const [{ n }] = await tx.select({ n: count() }).from(users).where(eq(users.role, "admin"));
+        if (n <= 1) throw new ApiError(409, "لا يمكن حذف حساب المدير الوحيد. أنشئ مديراً بديلاً أولاً.", "last_admin");
+      }
+      await tx.delete(aiUsage).where(eq(aiUsage.userId, user.id));
+      await tx.delete(users).where(eq(users.id, user.id));
+    });
     await endSession();
     return ok({ ok: true });
   });

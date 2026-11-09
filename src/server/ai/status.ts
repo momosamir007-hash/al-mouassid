@@ -34,7 +34,8 @@ export async function getProviderStatuses(): Promise<ProviderStatus[]> {
         const local = await createAdapter(rowToRecord(row)).checkReady();
         return { row, state: local.ready ? "ready" : "not_ready", local };
       }
-      const needsKey = row.kind !== "openai-compatible";
+      const keyless = Boolean(row.baseUrl?.includes("text.pollinations.ai"));
+      const needsKey = row.kind !== "ollama" && !keyless;
       if (needsKey && !resolveApiKey(row)) return { row, state: "no_key" };
       if (row.cooldownUntil && row.cooldownUntil.getTime() > Date.now()) return { row, state: "cooldown" };
       if (row.status === "ok") return { row, state: "ready" };

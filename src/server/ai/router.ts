@@ -47,7 +47,7 @@ export class NoProviderAvailableError extends Error {
  */
 export function orderProviders(list: ProviderRecord[], policy: RoutingPolicy, hasImage: boolean): ProviderRecord[] {
   const cost = (p: ProviderRecord) =>
-    p.costInPer1k == null && p.costOutPer1k == null ? Number.POSITIVE_INFINITY : (p.costInPer1k ?? 0) + (p.costOutPer1k ?? 0);
+    p.costInPer1k == null || p.costOutPer1k == null ? Number.POSITIVE_INFINITY : p.costInPer1k + p.costOutPer1k;
   const cmp = (a: ProviderRecord, b: ProviderRecord): number => {
     if (policy === "cost") {
       if (a.isLocal !== b.isLocal) return a.isLocal ? -1 : 1;
@@ -107,6 +107,10 @@ export class AiRouter {
         attempts.push({ ...base(p), outcome: "skipped", reason: "limit_requests" });
         continue;
       }
+      if (p.dailyCostLimitUsd != null && (p.costInPer1k == null || p.costOutPer1k == null)) {
+        attempts.push({ ...base(p), outcome: "skipped", reason: "cost_unknown" });
+        continue;
+      }
       if (p.dailyCostLimitUsd != null && usage.costUsd >= p.dailyCostLimitUsd) {
         attempts.push({ ...base(p), outcome: "skipped", reason: "limit_cost" });
         continue;
@@ -119,11 +123,16 @@ export class AiRouter {
         attempts.push({ ...base(p), outcome: "skipped", reason: "bad_config", message: (e as Error).message });
         continue;
       }
-      const ready = await this.readiness(p, adapter);
-      if (!ready.ready) {
-        attempts.push({ ...base(p), outcome: "skipped", reason: `not_ready:${ready.reason ?? "unknown"}` });
+      let ready: ReadyState;
+      try { ready = await this.readiness(p, adapter); }
+      catch (e) {
+        const err = e instanceof ProviderError ? e : new ProviderError("unknown", redactSecret((e as Error)?.message ?? "فشل فحص الجاهزية", p.getApiKey?.()));
+        attempts.push({ ...base(p), outcome: "failed", reason: `readiness:${err.kind}`, message: err.message });
+        this.readyCache.delete(p.id);
+        try { await this.opts.store.recordFailure(p.id, { task: input.task, userId: input.userId, kind: err.kind, message: err.message, latencyMs: 0, cooldownMs: cooldownFor(err) }); } catch { /* لا نوقف التحويل الاحتياطي بسبب سجل */ }
         continue;
       }
+      if (!ready.ready) { attempts.push({ ...base(p), outcome: "skipped", reason: `not_ready:${ready.reason ?? "unknown"}` }); continue; }
 
       // نرسل الصورة فقط إلى نموذج يدعم الرؤية؛ غيره يتلقى النص وحده.
       const useImage = hasImage && p.supportsVision;
@@ -133,18 +142,12 @@ export class AiRouter {
       try {
         const out = await adapter.chat(request);
         const latencyMs = this.now() - started;
-        const costUsd =
-          out.inputTokens != null && out.outputTokens != null && (p.costInPer1k != null || p.costOutPer1k != null)
-            ? (out.inputTokens / 1000) * (p.costInPer1k ?? 0) + (out.outputTokens / 1000) * (p.costOutPer1k ?? 0)
-            : null;
-        await this.opts.store.recordSuccess(p.id, {
-          task: input.task,
-          userId: input.userId,
-          latencyMs,
-          inputTokens: out.inputTokens,
-          outputTokens: out.outputTokens,
-          costUsd,
-        });
+        const costUsd = out.inputTokens != null && out.outputTokens != null && p.costInPer1k != null && p.costOutPer1k != null
+          ? (out.inputTokens / 1000) * p.costInPer1k + (out.outputTokens / 1000) * p.costOutPer1k : null;
+        // فشل تسجيل الاستخدام لا يحوّل إجابة صحيحة إلى فشل ولا يرسل طلباً مدفوعاً ثانياً.
+        try { await this.opts.store.recordSuccess(p.id, { task: input.task, userId: input.userId, latencyMs,
+          inputTokens: out.inputTokens, outputTokens: out.outputTokens, costUsd }); }
+        catch (e) { console.error("[ai-router] failed to record successful usage", e); }
         attempts.push({ ...base(p), outcome: "success" });
         return {
           text: out.text,
@@ -161,14 +164,9 @@ export class AiRouter {
           e instanceof ProviderError ? e : new ProviderError("unknown", redactSecret((e as Error)?.message ?? "خطأ غير معروف", p.getApiKey?.()));
         const cooldownMs = cooldownFor(err);
         this.readyCache.delete(p.id);
-        await this.opts.store.recordFailure(p.id, {
-          task: input.task,
-          userId: input.userId,
-          kind: err.kind,
-          message: err.message,
-          latencyMs: this.now() - started,
-          cooldownMs,
-        });
+        try { await this.opts.store.recordFailure(p.id, { task: input.task, userId: input.userId, kind: err.kind,
+          message: err.message, latencyMs: this.now() - started, cooldownMs }); }
+        catch (recordError) { console.error("[ai-router] failed to record provider failure", recordError); }
         attempts.push({ ...base(p), outcome: "failed", reason: err.kind, message: err.message });
         // لا إعادة إرسال إلى المزود نفسه أبداً؛ ننتقل إلى المزود التالي فقط.
       }

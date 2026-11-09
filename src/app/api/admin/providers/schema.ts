@@ -4,6 +4,19 @@ import { encryptSecret, hasAppSecret, keyHintOf } from "@/server/ai/secrets";
 import { ApiError } from "@/server/utils/api";
 
 const kinds = ["openai", "gemini", "anthropic", "openai-compatible", "ollama"] as const;
+const ALLOWED_KEY_ENV = new Set(["OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "HUGGINGFACE_API_KEY", "SAMBANOVA_API_KEY", "GITHUB_TOKEN", "TOGETHER_API_KEY", "NVIDIA_API_KEY", "XAI_API_KEY", "COHERE_API_KEY", "REPLICATE_API_KEY"]);
+function validProviderUrl(raw: string, kind?: string): boolean {
+  if (!raw) return true;
+  try {
+    const u = new URL(raw);
+    if (u.username || u.password || u.search || u.hash) return false;
+    const host = u.hostname.toLowerCase();
+    const loopback = host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+    const ipLiteral = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.startsWith("[");
+    if (kind === "ollama") return loopback && u.protocol === "http:";
+    return u.protocol === "https:" && !ipLiteral && host.includes(".") && !host.endsWith(".local") && !host.endsWith(".internal") && host !== "localhost";
+  } catch { return false; }
+}
 
 const base = {
   name: z.string().trim().min(1).max(60),
@@ -12,7 +25,7 @@ const base = {
     .string()
     .trim()
     .max(300)
-    .refine((v) => v === "" || /^https?:\/\//i.test(v), "يجب أن يبدأ العنوان بـ http:// أو https://")
+    .refine((v) => { if (!v) return true; try { const u = new URL(v); return !u.username && !u.password && !u.search && !u.hash && ["http:", "https:"].includes(u.protocol); } catch { return false; } }, "عنوان URL غير صالح")
     .nullable()
     .optional(),
   model: z.string().trim().min(1).max(120),
@@ -20,7 +33,7 @@ const base = {
     .string()
     .trim()
     .max(80)
-    .regex(/^[A-Z][A-Z0-9_]*$|^$/, "اسم متغير بيئة بأحرف كبيرة وشرطة سفلية")
+    .refine((v) => v === "" || ALLOWED_KEY_ENV.has(v), "اسم متغير البيئة غير مسموح؛ اختر متغير مفتاح مزود معتمداً")
     .nullable()
     .optional(),
   /** المفتاح الخام يُقبل عند الإدخال فقط ويُشفَّر ولا يُعاد أبداً. */
@@ -39,8 +52,13 @@ const base = {
   costOutPer1k: z.number().min(0).nullable().optional(),
 };
 
-export const providerCreateSchema = z.object(base);
-export const providerPatchSchema = z.object(base).partial();
+export const providerCreateSchema = z.object(base).superRefine((v, ctx) => {
+  if (v.baseUrl && !validProviderUrl(v.baseUrl, v.kind)) ctx.addIssue({ code: "custom", path: ["baseUrl"], message: "عنوان المزود غير آمن أو لا يطابق نوع المزود" });
+});
+export const providerPatchSchema = z.object(base).partial().superRefine((v, ctx) => {
+  if (v.baseUrl && !v.kind) ctx.addIssue({ code: "custom", path: ["kind"], message: "أرسل نوع المزود مع عنوانه للتحقق من سلامة الوجهة" });
+  if (v.baseUrl && v.kind && !validProviderUrl(v.baseUrl, v.kind)) ctx.addIssue({ code: "custom", path: ["baseUrl"], message: "عنوان المزود غير آمن أو لا يطابق نوع المزود" });
+});
 
 type Input = Partial<z.infer<typeof providerCreateSchema>>;
 

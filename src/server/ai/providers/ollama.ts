@@ -5,6 +5,8 @@ import type { AdapterConfig } from "./config";
 
 interface OllamaChatResponse {
   message?: { content?: string };
+  done_reason?: string;
+  done_reason?: string;
   prompt_eval_count?: number;
   eval_count?: number;
 }
@@ -74,8 +76,10 @@ export class OllamaAdapter implements ProviderAdapter {
       },
       timeoutMs: this.cfg.timeoutMs,
     })) as OllamaChatResponse;
-    const text = json.message?.content?.trim();
-    if (!text) throw new ProviderError("unavailable", "رد فارغ من النموذج المحلي");
+    if (json.done_reason === "length") throw new ProviderError("unavailable", "انتهى حد الرموز قبل اكتمال الإجابة؛ لم نعرض الرد المبتور.");
+    const raw = json.message?.content?.trim() ?? "";
+    const text = raw.replace(/<think\b[^>]*>[\s\S]*?(?:<\/think\s*>|$)/gi, "").trim();
+    if (!text) throw new ProviderError("unavailable", "رد فارغ أو تفكير داخلي فقط من النموذج المحلي");
     return { text, inputTokens: json.prompt_eval_count, outputTokens: json.eval_count };
   }
 }

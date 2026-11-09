@@ -15,7 +15,9 @@ export async function hashPassword(password: string): Promise<string> {
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const [v, saltB64, keyB64] = stored.split(".");
   if (v !== "s1" || !saltB64 || !keyB64) return false;
+  const salt = Buffer.from(saltB64, "base64url");
   const expected = Buffer.from(keyB64, "base64url");
-  const actual = await scryptAsync(password, Buffer.from(saltB64, "base64url"), expected.length);
+  if (salt.length !== 16 || expected.length !== 64) return false;
+  const actual = await scryptAsync(password, salt, expected.length);
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }

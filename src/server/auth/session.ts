@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { db } from "@/db";
 import { sessions, users } from "@/db/schema";
 import { ApiError } from "@/server/utils/api";
@@ -22,8 +22,7 @@ export async function startSession(userId: string): Promise<void> {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + TTL_MS);
   await db.insert(sessions).values({ tokenHash: sha(token), userId, expiresAt });
-  const h = await headers();
-  const secure = h.get("x-forwarded-proto") === "https";
+  const secure = process.env.NODE_ENV === "production";
   (await cookies()).set(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
@@ -56,7 +55,11 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     .innerJoin(users, eq(users.id, sessions.userId))
     .where(eq(sessions.tokenHash, sha(token)))
     .limit(1);
-  if (!row || row.expiresAt.getTime() < Date.now()) return null;
+  if (!row) return null;
+  if (row.expiresAt.getTime() < Date.now()) {
+    await db.delete(sessions).where(eq(sessions.tokenHash, sha(token)));
+    return null;
+  }
   return { id: row.id, email: row.email, name: row.name, role: row.role as SessionUser["role"], defaultLevel: row.defaultLevel };
 }
 

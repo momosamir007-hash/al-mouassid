@@ -49,6 +49,15 @@ describe("المحوّلات: نجاح وبروتوكولات", () => {
     expect(h.headers.authorization).toBe("Bearer sk-secret-123456");
   });
 
+
+  it("يرفض الرد المبتور بسبب نفاد حد الرموز", async () => {
+    handler = (_r, _b, res) => json(res, 200, { choices: [{ message: { content: "خطوات غير مكتملة" }, finish_reason: "length" }] });
+    const a = createAdapter(provider({ id: 1, name: "o", kind: "openai-compatible", baseUrl: `${base}/v1`, getApiKey: () => "test-key" }));
+    const err = await a.chat(chatReq).catch(e => e as ProviderError);
+    expect(err).toBeInstanceOf(ProviderError);
+    expect(err.message).toContain("الرد المبتور");
+  });
+
   it("OpenAI-compatible: يرسل الصورة بصيغة image_url", async () => {
     handler = (_r, _b, res) => json(res, 200, { choices: [{ message: { content: "ok" } }] });
     const a = createAdapter(provider({ id: 1, name: "o", kind: "openai-compatible", baseUrl: base }));
@@ -144,7 +153,7 @@ describe("التحويل التلقائي الكامل عبر HTTP حقيقي", 
       return json(res, 200, { candidates: [{ content: { parts: [{ text: "جاء من Gemini" }] } }] });
     };
     const store = new MemoryStore([
-      provider({ id: 1, name: "OpenAI", kind: "openai-compatible", baseUrl: `${base}/openai`, priority: 1 }),
+      provider({ id: 1, name: "OpenAI", kind: "openai-compatible", baseUrl: `${base}/openai`, priority: 1, getApiKey: () => "test-openai-key" }),
       provider({ id: 2, name: "Gemini", kind: "gemini", baseUrl: `${base}/gemini`, priority: 2, getApiKey: () => "k-gemini-test" }),
     ]);
     const router = new AiRouter({ store, createAdapter, readyTtlMs: 0 });
@@ -170,7 +179,7 @@ describe("التحويل التلقائي الكامل عبر HTTP حقيقي", 
       json(res, 404, {});
     };
     const store = new MemoryStore([
-      provider({ id: 1, name: "Cloud", baseUrl: `${base}/cloud`, priority: 1 }),
+      provider({ id: 1, name: "Cloud", baseUrl: `${base}/cloud`, priority: 1, getApiKey: () => "test-cloud-key" }),
       provider({ id: 2, name: "Ollama", kind: "ollama", baseUrl: base, model: "tiny:1b", isLocal: true, priority: 99 }),
     ]);
     const res = await new AiRouter({ store, createAdapter, readyTtlMs: 0 }).run({ task: "text", request: chatReq });

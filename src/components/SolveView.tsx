@@ -136,6 +136,7 @@ export function SolveView() {
           level: ex.level,
           subject: ex.subject,
           exerciseText: ex.text,
+          updatedAt: ex.updatedAt,
           action,
           studentAnswer: answer.trim() || undefined,
           history: ex.messages.slice(-16).map((m) => ({ role: m.role, action: m.action, content: m.content })),
